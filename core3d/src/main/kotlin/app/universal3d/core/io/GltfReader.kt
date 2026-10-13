@@ -30,7 +30,7 @@ object GltfReader {
         val limit = if (total in 20..bytes.size) total else bytes.size
         var off = 12
         var json: String? = null
-        var bin: ByteArray? = null
+        var binOff = -1; var binLen = 0
         while (off + 8 <= limit) {
             val len = bb.getInt(off)
             val type = bb.getInt(off + 4)
@@ -38,16 +38,16 @@ object GltfReader {
             if (len < 0 || start + len > bytes.size) throw ModelImportException(ModelImportException.Code.MALFORMED, "GLB truncado: un chunk excede el tamaño del archivo.")
             when (type) {
                 CHUNK_JSON -> if (json == null) json = String(bytes, start, len, Charsets.UTF_8)
-                CHUNK_BIN -> if (bin == null) bin = bytes.copyOfRange(start, start + len)
+                CHUNK_BIN -> if (binOff < 0) { binOff = start; binLen = len }
             }
             off = start + ((len + 3) and 3.inv())
         }
         val j = json ?: throw ModelImportException(ModelImportException.Code.MALFORMED, "GLB sin chunk JSON.")
-        return Parser(j, bin, name, ModelFormat.GLB, bundle, mainPath, bytes.size.toLong()).parse()
+        return Parser(j, if (binOff >= 0) bytes else null, binOff, binLen, name, ModelFormat.GLB, bundle, mainPath, bytes.size.toLong()).parse()
     }
 
     fun readGltf(json: String, name: String, bundle: FileBundle?, mainPath: String?, size: Long = json.length.toLong()): Scene3D =
-        Parser(json, null, name, ModelFormat.GLTF, bundle, mainPath, size).parse()
+        Parser(json, null, 0, 0, name, ModelFormat.GLTF, bundle, mainPath, size).parse()
 
     /** Lista las dependencias externas (uris) de un .gltf sin cargarlas. */
     fun listExternalUris(json: String): List<String> {
@@ -63,13 +63,15 @@ object GltfReader {
     }
 
     private class Parser(
-        val jsonText: String, val glbBin: ByteArray?, val name: String, val format: ModelFormat,
+        val jsonText: String, val glbBin: ByteArray?, val glbBinOffset: Int, val glbBinLength: Int, val name: String, val format: ModelFormat,
         val bundle: FileBundle?, val mainPath: String?, val size: Long,
     ) {
         val notices = ArrayList<Notice>()
         val missing = ArrayList<String>()
         lateinit var root: JsonObject
         val buffers = ArrayList<ByteArray?>()
+        val bufBase = ArrayList<Int>()
+        val bufLength = ArrayList<Int>()
 
         fun parse(): Scene3D {
             root = try {
@@ -143,10 +145,13 @@ object GltfReader {
                         if (f == null) { missing.add(uri); null } else f.read()
                     }
                 }
-                if (data != null && declared >= 0 && data.size < declared) {
-                    throw ModelImportException(ModelImportException.Code.INCOMPLETE, "El buffer '${uri ?: i}' está incompleto (${data.size} de $declared bytes).")
+                val isGlbBin = uri == null && i == 0 && glbBin != null
+                val base = if (isGlbBin) glbBinOffset else 0
+                val length = if (isGlbBin) glbBinLength else (data?.size ?: 0)
+                if (data != null && declared >= 0 && length < declared) {
+                    throw ModelImportException(ModelImportException.Code.INCOMPLETE, "El buffer '${uri ?: i}' está incompleto ($length de $declared bytes).")
                 }
-                buffers.add(data)
+                buffers.add(data); bufBase.add(base); bufLength.add(length)
             }
         }
 
@@ -167,8 +172,9 @@ object GltfReader {
             val data = buffers.getOrNull(buf) ?: return null
             val off = bv["byteOffset"]?.jsonPrimitive?.intOrNull ?: 0
             val len = bv["byteLength"]?.jsonPrimitive?.intOrNull ?: 0
-            if (off < 0 || len < 0 || off + len > data.size) throw ModelImportException(ModelImportException.Code.INCOMPLETE, "bufferView $index excede el buffer (datos truncados).")
-            return Triple(data, off, len)
+            val total = bufLength[buf]
+            if (off < 0 || len < 0 || off.toLong() + len > total) throw ModelImportException(ModelImportException.Code.INCOMPLETE, "bufferView $index excede el buffer (datos truncados).")
+            return Triple(data, bufBase[buf] + off, len)
         }
 
         fun loadImages(): List<Image3D> {

@@ -53,6 +53,8 @@ class ReplicationInput(
     val capture: CaptureProvider? = null,
     val maxBytes: Long = 256L * 1024 * 1024,
     val confirmLargeDownload: suspend (Long) -> Boolean = { true },
+    /** Comprobación previa de memoria para un archivo de N bytes; debe lanzar una excepción con un mensaje comprensible. */
+    val checkMemory: (Long) -> Unit = {},
 )
 
 /**
@@ -167,6 +169,7 @@ class ReplicationEngine {
     private suspend fun fetchAndImport(scope: ProducerScope<ReplicationEvent>, input: ReplicationInput, r: DetectedResource, label: String): Scene3D {
         if (r.unsupportedExtension != null) throw UnsupportedFormatException("Formato .${r.unsupportedExtension} no compatible con el motor actual.")
         r.sizeBytes?.let { if (it > input.maxBytes) throw FetchException(FetchException.Kind.TOO_LARGE, "Archivo demasiado grande (${it / 1048576} MB).") ; if (it > 50L * 1024 * 1024 && !input.confirmLargeDownload(it)) throw FetchException(FetchException.Kind.POLICY, "Descarga cancelada por el usuario (archivo grande).") }
+        r.sizeBytes?.let { input.checkMemory(it) }
         val files = ArrayList<BundleFile>()
         val main = input.fetcher.download(r.url, input.maxBytes, input.headersFor(r.url)) { done, total -> scope.trySend(ReplicationEvent.Progress(done, total, label)) }
         val name = ResourceClassifier.extensionOf(r.url).let { ext -> r.url.substringBefore('?').substringAfterLast('/').ifEmpty { "modelo.$ext" } }

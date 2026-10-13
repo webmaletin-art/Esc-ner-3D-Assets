@@ -11,13 +11,40 @@ import java.security.MessageDigest
 object GlbWriter {
     class Result(val bytes: ByteArray, val notices: List<Notice>)
 
+    /** Contenedor GLB ya preparado: se escribe por trozos, sin construir un único arreglo gigante. */
+    class Prepared(private val jsonBytes: ByteArray, private val chunks: List<ByteArray>, private val binSize: Int, val notices: List<Notice>) {
+        val totalSize: Long get() = 12L + 8 + jsonBytes.size + 8 + binSize
+        fun writeTo(out: java.io.OutputStream) {
+            val head = ByteBuffer.allocate(12 + 8).order(ByteOrder.LITTLE_ENDIAN)
+            head.putInt(0x46546C67); head.putInt(2); head.putInt(totalSize.toInt())
+            head.putInt(jsonBytes.size); head.putInt(0x4E4F534A)
+            out.write(head.array()); out.write(jsonBytes)
+            val bh = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN); bh.putInt(binSize); bh.putInt(0x004E4942)
+            out.write(bh.array())
+            for (c in chunks) out.write(c)
+        }
+    }
+
     private class BinBuilder {
-        val out = ByteArrayOutputStream()
-        fun align() { while (out.size() % 4 != 0) out.write(0) }
-        val size get() = out.size()
+        val chunks = ArrayList<ByteArray>()
+        var size = 0
+        fun add(b: ByteArray) { chunks.add(b); size += b.size }
+        fun align() { val pad = (4 - size % 4) % 4; if (pad > 0) add(ByteArray(pad)) }
+    }
+
+    /** Escribe directamente a un flujo (p. ej. un archivo) minimizando el uso de memoria. */
+    fun writeTo(scene: Scene3D, out: java.io.OutputStream, generator: String = "Universal 3D Asset Inspector"): List<Notice> {
+        val p = prepare(scene, generator); p.writeTo(out); return p.notices
     }
 
     fun write(scene: Scene3D, generator: String = "Universal 3D Asset Inspector"): Result {
+        val p = prepare(scene, generator)
+        val bos = ByteArrayOutputStream(p.totalSize.toInt())
+        p.writeTo(bos)
+        return Result(bos.toByteArray(), p.notices)
+    }
+
+    fun prepare(scene: Scene3D, generator: String = "Universal 3D Asset Inspector"): Prepared {
         val notices = ArrayList<Notice>()
         val bin = BinBuilder()
         val bufferViews = ArrayList<JsonElement>()
@@ -27,7 +54,7 @@ object GlbWriter {
         fun addView(data: ByteArray, target: Int?, stride: Int? = null): Int {
             bin.align()
             val off = bin.size
-            bin.out.write(data)
+            bin.add(data)
             bufferViews.add(buildJsonObject {
                 put("buffer", 0); put("byteOffset", off); put("byteLength", data.size)
                 if (stride != null) put("byteStride", stride)
@@ -244,13 +271,7 @@ object GlbWriter {
             putJsonArray("buffers") { add(buildJsonObject { put("byteLength", bin.size) }) }
         }
         val jsonBytes = pad(root.toString().toByteArray(Charsets.UTF_8), 0x20)
-        val binBytes = bin.out.toByteArray()
-        val total = 12 + 8 + jsonBytes.size + 8 + binBytes.size
-        val bb = ByteBuffer.allocate(total).order(ByteOrder.LITTLE_ENDIAN)
-        bb.putInt(0x46546C67); bb.putInt(2); bb.putInt(total)
-        bb.putInt(jsonBytes.size); bb.putInt(0x4E4F534A); bb.put(jsonBytes)
-        bb.putInt(binBytes.size); bb.putInt(0x004E4942); bb.put(binBytes)
-        return Result(bb.array(), notices)
+        return Prepared(jsonBytes, bin.chunks, bin.size, notices)
     }
 
     private fun pad(b: ByteArray, fill: Int): ByteArray {

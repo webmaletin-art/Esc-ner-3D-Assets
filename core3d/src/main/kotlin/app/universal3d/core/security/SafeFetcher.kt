@@ -84,11 +84,24 @@ class SafeFetcher(
             if (code !in 200..299) throw FetchException(FetchException.Kind.HTTP, "Error HTTP $code", code)
             val total = r.body.contentLength().takeIf { it >= 0 }
             if (total != null && total > maxBytes) throw FetchException(FetchException.Kind.TOO_LARGE, "El archivo (${total / 1048576} MB) excede el límite permitido (${maxBytes / 1048576} MB).")
-            val out = ByteArrayOutputStream(((total ?: 64 * 1024).coerceAtMost(maxBytes)).toInt().coerceAtLeast(1024))
             val src = r.body.source()
+            val ctx = currentCoroutineContext()
+            if (total != null) {
+                // tamaño conocido: se reserva exactamente y se rellena sin copias intermedias
+                val data = ByteArray(total.toInt())
+                var done = 0
+                while (done < data.size) {
+                    ctx.ensureActive()
+                    val n = src.read(data, done, minOf(64 * 1024, data.size - done))
+                    if (n < 0) throw FetchException(FetchException.Kind.NETWORK, "Descarga incompleta ($done de ${data.size} bytes).")
+                    done += n
+                    onProgress(done.toLong(), total)
+                }
+                return@use data
+            }
+            val out = ByteArrayOutputStream(64 * 1024)
             val buf = ByteArray(32 * 1024)
             var done = 0L
-            val ctx = currentCoroutineContext()
             while (true) {
                 ctx.ensureActive()
                 val n = src.read(buf)
@@ -96,7 +109,7 @@ class SafeFetcher(
                 done += n
                 if (done > maxBytes) throw FetchException(FetchException.Kind.TOO_LARGE, "La descarga superó el límite permitido (${maxBytes / 1048576} MB).")
                 out.write(buf, 0, n)
-                onProgress(done, total)
+                onProgress(done, null)
             }
             out.toByteArray()
         }

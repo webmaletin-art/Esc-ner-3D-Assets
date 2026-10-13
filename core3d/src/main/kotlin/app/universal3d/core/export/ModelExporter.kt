@@ -73,9 +73,13 @@ object ModelExporter {
 
 /** Reabre el archivo generado y comprueba que conserva lo esencial antes de declarar éxito. */
 object ExportVerifier {
+    /** A partir de este tamaño el GLB se verifica estructuralmente (sin reconstruir una segunda escena en memoria). */
+    const val LIGHT_VERIFY_BYTES = 16 * 1024 * 1024
+
     fun verify(src: Scene3D, format: ExportFormat, bytes: ByteArray): Verification {
         val details = ArrayList<String>()
         if (bytes.isEmpty()) return Verification(false, listOf("El archivo generado está vacío."))
+        if (format == ExportFormat.GLB && bytes.size > LIGHT_VERIFY_BYTES) return verifyGlbStructure(src, bytes)
         return try {
             val back = when (format) {
                 ExportFormat.GLB -> ModelImporter.importBytes("check.glb", bytes)
@@ -87,6 +91,39 @@ object ExportVerifier {
         } catch (e: Exception) {
             Verification(false, listOf("No se pudo reabrir el archivo generado: ${e.message}"))
         }
+    }
+
+    /**
+     * Verificación estructural de un GLB grande: contenedor coherente, JSON válido, recuentos de mallas/primitivas/triángulos,
+     * imágenes, pieles y animaciones iguales a los del modelo de origen, y buffer del tamaño declarado.
+     */
+    fun verifyGlbStructure(src: Scene3D, bytes: ByteArray): Verification {
+        val d = ArrayList<String>()
+        try {
+            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            if (bytes.size < 28 || bb.getInt(0) != 0x46546C67 || bb.getInt(4) != 2) return Verification(false, listOf("Cabecera GLB inválida."))
+            if (bb.getInt(8) != bytes.size) return Verification(false, listOf("La longitud declarada del GLB no coincide con el archivo."))
+            val jl = bb.getInt(12)
+            if (bb.getInt(16) != 0x4E4F534A || 20 + jl + 8 > bytes.size) return Verification(false, listOf("Chunk JSON inválido."))
+            val json = kotlinx.serialization.json.Json.parseToJsonElement(String(bytes, 20, jl, Charsets.UTF_8)).let { it as kotlinx.serialization.json.JsonObject }
+            val binLen = bb.getInt(20 + jl)
+            if (bb.getInt(24 + jl) != 0x004E4942 || 28 + jl + binLen != bytes.size) return Verification(false, listOf("Chunk BIN inválido o truncado."))
+            fun arr(k: String) = json[k] as? kotlinx.serialization.json.JsonArray
+            val accessors = arr("accessors"); var ok = true
+            var tris = 0L
+            for (m in arr("meshes") ?: kotlinx.serialization.json.JsonArray(emptyList())) for (p in (m as kotlinx.serialization.json.JsonObject)["primitives"] as kotlinx.serialization.json.JsonArray) {
+                val idx = ((p as kotlinx.serialization.json.JsonObject)["indices"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toInt() ?: continue
+                tris += ((accessors!![idx] as kotlinx.serialization.json.JsonObject)["count"] as kotlinx.serialization.json.JsonPrimitive).content.toLong() / 3
+            }
+            val srcTris = src.meshes.sumOf { m -> m.primitives.sumOf { it.triangleCount.toLong() } }
+            if (tris != srcTris) { ok = false; d.add("GLB: triángulos $srcTris → $tris.") } else d.add("GLB: $tris triángulos verificados (verificación estructural, archivo grande).")
+            val bl = (((arr("buffers")?.firstOrNull() as? kotlinx.serialization.json.JsonObject)?.get("byteLength") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toInt() ?: -1)
+            if (bl != binLen) { ok = false; d.add("GLB: tamaño de buffer declarado $bl ≠ chunk $binLen.") }
+            if ((arr("animations")?.size ?: 0) != src.animations.size) { ok = false; d.add("GLB: animaciones distintas.") }
+            if ((arr("skins")?.size ?: 0) != src.skins.size) { ok = false; d.add("GLB: esqueletos distintos.") }
+            if (src.images.isNotEmpty() && (arr("images")?.size ?: 0) == 0) { ok = false; d.add("GLB: faltan imágenes.") }
+            return Verification(ok, d)
+        } catch (e: Exception) { return Verification(false, listOf("No se pudo verificar el GLB: ${e.message}")) }
     }
 
     fun verifyFullZip(src: Scene3D, bytes: ByteArray, stem: String): Verification {

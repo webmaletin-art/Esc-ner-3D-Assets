@@ -47,10 +47,12 @@ class LibraryRepository(context: Context) {
         val id = UUID.randomUUID().toString().take(12)
         val dir = File(root, id).apply { mkdirs() }
         try {
-            val glb = GlbWriter.write(scene).bytes
-            File(dir, "model.glb").writeBytes(glb)
+            val modelFile = File(dir, "model.glb")
+            // escritura directa a disco por trozos: evita duplicar el modelo completo en memoria
+            modelFile.outputStream().buffered(256 * 1024).use { GlbWriter.writeTo(scene, it) }
+            val glbSize = modelFile.length()
             val tris = scene.meshes.sumOf { m -> m.primitives.sumOf { it.triangleCount.toLong() } }
-            val item = LibraryItem(id, SafeNames.fileStem(scene.name, "modelo"), scene.sourceFormat, System.currentTimeMillis(), tris, glb.size.toLong(), origin, scene.importNotices)
+            val item = LibraryItem(id, SafeNames.fileStem(scene.name, "modelo"), scene.sourceFormat, System.currentTimeMillis(), tris, glbSize, origin, scene.importNotices)
             writeMeta(dir, item)
             _items.value = listOf(item) + _items.value
             item

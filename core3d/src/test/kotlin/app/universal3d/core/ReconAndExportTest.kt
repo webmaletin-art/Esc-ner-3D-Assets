@@ -170,3 +170,23 @@ class RealBrowserFixtureTest {
 }
 
 object PageSignalsHolder { fun parse(s: String) = app.universal3d.core.detect.PageSignals.parse(s) }
+
+class LargeModelTest {
+    @Test fun largeGlbUsesStructuralVerificationAndStreamsToDisk() {
+        val base = TestAssets.texturedCube()
+        val big = Image3D("grande.png", "image/png", ByteArray(18 * 1024 * 1024) { (it * 31).toByte() })
+        val scene = Scene3D("grande", ModelFormat.GLB, base.nodes, base.rootNodes, base.meshes, base.materials, base.textures, listOf(big, base.images[1]))
+        val art = app.universal3d.core.export.ModelExporter.export(scene, ExportFormat.GLB)
+        assertTrue(art.bytes.size > ExportVerifier.LIGHT_VERIFY_BYTES)
+        assertTrue(art.verification.details.joinToString(), art.verification.ok)
+        assertTrue(art.verification.details.any { it.contains("estructural") })
+        // escritura por flujo produce exactamente los mismos bytes que write()
+        val bos = java.io.ByteArrayOutputStream(); app.universal3d.core.io.GlbWriter.writeTo(scene, bos)
+        assertArrayEquals(art.bytes, bos.toByteArray())
+        // y el lector accede al BIN en sitio (sin copia) con el mismo resultado
+        val back = app.universal3d.core.io.ModelImporter.importBytes("g.glb", art.bytes)
+        assertEquals(12, back.meshes[0].primitives[0].triangleCount)
+        assertEquals(big.bytes.size, back.images[0].bytes.size)
+        assertFalse(ExportVerifier.verifyGlbStructure(scene, art.bytes.copyOf(art.bytes.size - 4)).ok)
+    }
+}

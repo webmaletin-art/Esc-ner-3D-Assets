@@ -57,6 +57,7 @@ class Pipelines(private val c: AppContainer, private val resolver: ContentResolv
         val title = if (files.size == 1) "Importando ${files[0].name}" else "Importando ${files.size} archivos"
         return c.tasks.submit(title, FormatSniffer.byExtension(files.first().name), files.sumOf { it.size.coerceAtLeast(0) }.takeIf { it > 0 }, retryable = true) { rep ->
             rep.phase("Leyendo archivos")
+            MemoryGuard.check(files.sumOf { it.size.coerceAtLeast(0) })
             val bundleFiles = files.map { f ->
                 BundleFile(f.name, f.size.coerceAtLeast(0)) {
                     resolver.openInputStream(f.uri)?.use { it.readBytes() } ?: throw ModelImportException(ModelImportException.Code.IO, "No se pudo abrir ${f.name}.")
@@ -111,7 +112,7 @@ class Pipelines(private val c: AppContainer, private val resolver: ContentResolv
         // Reutiliza el motor de replicación en su modo de archivo original para obtener dependencias con la misma lógica
         val report = DetectionReport(pageUrl, app.universal3d.core.detect.DetectionState.FILE_DETECTED, listOf(r), emptyList(), false, false, emptyList(), null)
         var result: ReplicationResult? = null
-        ReplicationEngine().run(ReplicationInput(report, c.fetcher, c.adapters, headersFor = { headers(it, pageUrl) }, maxBytes = 256L * 1024 * 1024)).collect { ev ->
+        ReplicationEngine().run(ReplicationInput(report, c.fetcher, c.adapters, headersFor = { headers(it, pageUrl) }, maxBytes = 256L * 1024 * 1024, checkMemory = { MemoryGuard.check(it) })).collect { ev ->
             when (ev) {
                 is ReplicationEvent.Progress -> rep.progress(ev.done, ev.total)
                 is ReplicationEvent.Phase -> rep.phase(ev.label)
@@ -177,7 +178,7 @@ class Pipelines(private val c: AppContainer, private val resolver: ContentResolv
         val id = c.tasks.submit("Copiar / Replicar modelo", null, null, retryable = false) { rep ->
             val input = ReplicationInput(
                 report, c.fetcher, c.adapters, tokenFor = { c.tokens.get(it) }, headersFor = { headers(it, report.pageUrl) }, capture = capture,
-                confirmLargeDownload = { true },
+                confirmLargeDownload = { true }, checkMemory = { MemoryGuard.check(it) },
             )
             var finished: ReplicationResult? = null
             ReplicationEngine().run(input).collect { ev ->
