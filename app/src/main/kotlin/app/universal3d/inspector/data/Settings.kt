@@ -11,7 +11,7 @@ data class SettingsState(
     val captureWebGl: Boolean = true,
     val maxTextureSize: Int = 2048,
     val backgroundIndex: Int = 0,
-    val homeUrl: String = "https://sketchfab.com/feed",
+    val homeUrl: String = "https://modelviewer.dev/",
     val lowMemoryMode: Boolean = false,
     val confirmLargeBytes: Long = 50L * 1024 * 1024,
 )
@@ -27,7 +27,7 @@ class Settings(context: Context) {
         captureWebGl = prefs.getBoolean("captureWebGl", true),
         maxTextureSize = prefs.getInt("maxTextureSize", 2048),
         backgroundIndex = prefs.getInt("backgroundIndex", 0),
-        homeUrl = prefs.getString("homeUrl", null) ?: "https://sketchfab.com/feed",
+        homeUrl = prefs.getString("homeUrl", null) ?: "https://modelviewer.dev/",
         lowMemoryMode = prefs.getBoolean("lowMemoryMode", false),
     )
 

@@ -119,14 +119,20 @@ class BrowserController(private val c: AppContainer) {
         val canStart = WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)
         _state.value = _state.value.copy(webMessagingSupported = canListen && canStart)
         if (!canListen || !canStart) return
-        try {
-            val script = PageScript.load(wv.context, st.captureWebGl)
-            val rules = setOf("*")
-            WebViewCompat.addWebMessageListener(wv, "U3DBridge", rules) { _, message, origin, isMain, proxy -> onBridgeMessage(message, origin.toString(), isMain, proxy) }
-            WebViewCompat.addDocumentStartJavaScript(wv, script, rules)
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(webMessagingSupported = false)
+        val script = PageScript.load(wv.context, st.captureWebGl)
+        // Se prueba el conjunto de reglas de origen más amplio primero; cada intento es atómico (listener + script).
+        val ruleSets = listOf(setOf("*"), setOf("https://*"))
+        var ok = false
+        for (rules in ruleSets) {
+            try {
+                WebViewCompat.addWebMessageListener(wv, "U3DBridge", rules) { _, message, origin, isMain, proxy -> onBridgeMessage(message, origin.toString(), isMain, proxy) }
+                WebViewCompat.addDocumentStartJavaScript(wv, script, rules)
+                ok = true; break
+            } catch (e: Exception) {
+                try { WebViewCompat.removeWebMessageListener(wv, "U3DBridge") } catch (_: Exception) { }
+            }
         }
+        if (!ok) _state.value = _state.value.copy(webMessagingSupported = false)
     }
 
     // ------------------------------------------------------------------ mensajes de la página (no confiables)
@@ -177,7 +183,7 @@ class BrowserController(private val c: AppContainer) {
                 if (replyProxies.isEmpty()) {
                     // sin canal de mensajes: sólo marco principal por evaluateJavascript
                     webView?.evaluateJavascript("window.__u3d&&window.__u3d.requestCapture('$id')", null)
-                } else replyProxies.values.forEach { p -> try { p.postMessage("capture:$id") } catch (_: Exception) { } }
+                } else replyProxies.values.forEach { p -> try { if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) p.postMessage("capture:$id") } catch (_: Exception) { } }
             }
             withTimeoutOrNull(25_000) { asm.done.await() }
         } finally { pendingCaptures.remove(id) }
