@@ -136,3 +136,37 @@ class ReconAndExportTest {
         assertFalse(ExportVerifier.verify(scene, ExportFormat.GLB, ByteArray(0)).ok)
     }
 }
+
+/** Usa salidas REALES del script de página ejecutado en Chromium (WebGL2/SwiftShader), no datos sintéticos. */
+class RealBrowserFixtureTest {
+    private fun res(n: String) = javaClass.classLoader.getResourceAsStream(n)!!.readBytes().toString(Charsets.UTF_8)
+
+    @Test fun realCaptureFromChromiumReconstructsTexturedCube() {
+        val rec = app.universal3d.core.replicate.WebGlCaptureReconstructor.reconstruct(res("chromium_webgl_capture.json"))
+        assertEquals(1, rec.drawsUsed)
+        val p = rec.scene.meshes[0].primitives[0]
+        assertEquals(12, p.triangleCount); assertEquals(24, p.vertexCount)
+        assertNotNull("UV cuantizadas (u16 normalizadas) decodificadas", p.uv0); assertNotNull("normales (int8 normalizadas)", p.normals)
+        val b = rec.scene.bounds()
+        assertEquals(1f, b.sizeX, 0.05f); assertEquals(1f, b.sizeY, 1e-3f)
+        assertEquals(0.25f, b.centerY, 1e-3f) // matriz u_model identificada por nombre
+        assertEquals(0.5f, b.centerX, 0.05f)
+        assertEquals(1, rec.scene.images.size)
+        assertEquals(8 to 8, rec.scene.images[0].dimensions)
+        // ida y vuelta: se puede exportar a GLB y reabrir
+        val art = app.universal3d.core.export.ModelExporter.export(rec.scene, ExportFormat.GLB)
+        assertTrue(art.verification.details.joinToString(), art.verification.ok)
+    }
+
+    @Test fun realSignalsFromChromiumAreClassified() {
+        val sig = PageSignalsHolder.parse(res("chromium_page_signals.json"))!!
+        val rep = app.universal3d.core.detect.DetectionClassifier.analyze("https://example.com/page.html", sig, emptyList(), app.universal3d.core.adapters.AdapterRegistry.default().all)
+        assertEquals(app.universal3d.core.detect.DetectionState.FILE_DETECTED, rep.state)
+        assertTrue(rep.resources.any { it.url.endsWith("astro.glb") && it.origin == app.universal3d.core.resources.Provenance.MODEL_VIEWER })
+        assertTrue(rep.resources.any { it.url.endsWith("robot.fbx") })
+        assertTrue(rep.resources.any { it.unsupportedExtension == "usdz" })
+        assertTrue(sig.canvases.single().drawCalls > 0)
+    }
+}
+
+object PageSignalsHolder { fun parse(s: String) = app.universal3d.core.detect.PageSignals.parse(s) }

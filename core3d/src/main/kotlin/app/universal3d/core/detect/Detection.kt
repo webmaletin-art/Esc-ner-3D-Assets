@@ -35,6 +35,21 @@ class PageSignals(
     val crossOriginIframeBlocked: Boolean = false,
 ) {
     companion object {
+        /** Une las señales de varios marcos (documento principal e iframes) en un solo conjunto. */
+        fun merge(main: PageSignals?, frames: Collection<PageSignals>): PageSignals? {
+            val all = listOfNotNull(main) + frames
+            if (all.isEmpty()) return null
+            val m = all.first()
+            fun <T> cat(f: (PageSignals) -> List<T>) = all.flatMap(f).distinct()
+            val caps = all.mapNotNull { it.capture }
+            return PageSignals(
+                url = m.url, title = m.title, viewers = all.flatMap { it.viewers }.take(20), links = cat { it.links }.take(200), iframes = cat { it.iframes }.take(40),
+                libs = cat { it.libs }, canvases = all.flatMap { it.canvases }.take(20), net = cat { it.net }.take(200),
+                capture = if (caps.isEmpty()) null else CaptureSignal(caps.any { it.available }, caps.sumOf { it.draws }, caps.sumOf { it.bufferBytes }, caps.any { it.truncated }),
+                crossOriginIframeBlocked = all.any { it.crossOriginIframeBlocked },
+            )
+        }
+
         const val MAX_JSON = 512 * 1024
         private const val MAX_URLS = 200
         private val KNOWN_LIBS = setOf("three", "babylon", "aframe", "playcanvas", "cesium", "sketchfab", "model-viewer", "pixi", "regl", "unity", "godot", "x3dom", "vtk", "deck")

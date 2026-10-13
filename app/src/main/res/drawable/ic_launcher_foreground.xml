@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- cubo isométrico -->
+    <path android:fillColor="#FF4FC3F7" android:pathData="M54,24 L80,39 L54,54 L28,39 Z" />
+    <path android:fillColor="#FF0288D1" android:pathData="M28,39 L54,54 L54,84 L28,69 Z" />
+    <path android:fillColor="#FF01579B" android:pathData="M80,39 L54,54 L54,84 L80,69 Z" />
+</vector>

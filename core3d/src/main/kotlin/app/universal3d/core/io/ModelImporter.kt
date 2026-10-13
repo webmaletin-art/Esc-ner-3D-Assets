@@ -52,6 +52,11 @@ object ModelImporter {
     }
 
     fun importBundle(bundle: FileBundle, displayName: String? = null): Scene3D {
+        if (bundle.pickMain() == null) {
+            // ¿hay un ZIP con el modelo dentro? (p. ej. el usuario eligió "modelo.zip")
+            val zip = bundle.files.firstOrNull { it.extension == "zip" }
+            if (zip != null) return importBundle(unzip(zip.read()), displayName ?: zip.fileName.substringBeforeLast('.'))
+        }
         val main = bundle.pickMain() ?: run {
             val ext = bundle.files.joinToString { it.extension }.ifBlank { "ninguno" }
             throw UnsupportedFormatException("No se encontró un modelo compatible (.glb, .gltf, .obj, .fbx). Archivos recibidos: $ext.")

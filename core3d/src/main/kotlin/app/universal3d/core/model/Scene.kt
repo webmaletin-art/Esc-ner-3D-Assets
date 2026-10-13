@@ -177,6 +177,11 @@ class Scene3D(
         return out
     }
 
+    /** Copia de metadatos (nombre, formato de origen, avisos); el contenido se comparte, no se duplica. */
+    fun retag(name: String = this.name, sourceFormat: ModelFormat = this.sourceFormat, notices: List<Notice> = importNotices, missing: List<String> = missingDependencies, size: Long = sourceSizeBytes) = Scene3D(
+        name, sourceFormat, nodes, rootNodes, meshes, materials, textures, images, skins, animations, notices, missing, size,
+    )
+
     fun withNotices(extra: List<Notice>, missing: List<String> = emptyList(), size: Long = sourceSizeBytes) = Scene3D(
         name, sourceFormat, nodes, rootNodes, meshes, materials, textures, images, skins, animations,
         importNotices + extra, missingDependencies + missing, size,

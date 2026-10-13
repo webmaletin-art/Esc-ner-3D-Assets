@@ -55,9 +55,10 @@ class DetectionEngine(
         if (netUrls.add(url)) scheduleRecompute()
     }
 
-    @Synchronized fun onSignals(json: String) {
-        if (signalCount >= 40) return // límite por página
-        val s = PageSignals.parse(json) ?: return
+    fun onSignals(json: String) { PageSignals.parse(json)?.let { onSignals(it) } }
+
+    @Synchronized fun onSignals(s: PageSignals) {
+        if (signalCount >= 60) return // límite por página
         signalCount++
         signals = s
         scheduleRecompute()

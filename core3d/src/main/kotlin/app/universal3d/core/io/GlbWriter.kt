@@ -158,7 +158,8 @@ object GlbWriter {
                                 p.colors?.let { put("COLOR_0", floatAccessor(it, 4, "VEC4", 34962)) }
                                 if (p.joints != null && p.weights != null) {
                                     val jb = ByteBuffer.allocate(p.joints.size * 2).order(ByteOrder.LITTLE_ENDIAN)
-                                    for (j in p.joints) jb.putShort(j.toShort())
+                                    // joints con peso 0 se normalizan a 0 (requisito del validador de glTF)
+                                    for ((k, j) in p.joints.withIndex()) jb.putShort((if (p.weights[k] == 0f) 0 else j).toShort())
                                     put("JOINTS_0", addAccessor(addView(jb.array(), 34962), 5123, p.joints.size / 4, "VEC4"))
                                     put("WEIGHTS_0", floatAccessor(p.weights, 4, "VEC4", 34962))
                                 }

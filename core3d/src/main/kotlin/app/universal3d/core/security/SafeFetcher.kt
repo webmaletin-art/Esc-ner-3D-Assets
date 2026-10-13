@@ -26,11 +26,16 @@ class ProbeResult(val finalUrl: String, val httpCode: Int, val contentType: Stri
  * Los encabezados Cookie/Authorization nunca se registran.
  */
 class SafeFetcher(
-    private val allowHttp: Boolean = false,
+    allowHttp: Boolean = false,
     private val blockPrivate: Boolean = true,
     private val userAgent: String = "Universal3DAssetInspector/1.0",
     client: OkHttpClient? = null,
+    /** Permite leer el ajuste en vivo (el usuario puede cambiarlo sin recrear el cliente). */
+    private val allowHttpProvider: (() -> Boolean)? = null,
 ) {
+    private val allowHttpFixed = allowHttp
+    private val allowHttp: Boolean get() = allowHttpProvider?.invoke() ?: allowHttpFixed
+
     private val http: OkHttpClient = (client ?: OkHttpClient.Builder().build()).newBuilder()
         .followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(0, TimeUnit.SECONDS)
@@ -95,6 +100,42 @@ class SafeFetcher(
             }
             out.toByteArray()
         }
+    }
+
+    /** Descarga en streaming a un archivo (sin cargarlo en memoria). Si falla o se cancela, el archivo parcial se elimina. */
+    suspend fun downloadToFile(
+        url: String, target: java.io.File, maxBytes: Long, headers: Map<String, String> = emptyMap(),
+        onProgress: (Long, Long?) -> Unit = { _, _ -> },
+    ): Long = withContext(Dispatchers.IO) {
+        val (resp, _) = execute(url, headers)
+        var ok = false
+        try {
+            resp.use { r ->
+                val code = r.code
+                if (code == 401 || code == 403) throw FetchException(FetchException.Kind.AUTH, "Acceso denegado (HTTP $code)", code)
+                if (code == 404 || code == 410) throw FetchException(FetchException.Kind.NOT_FOUND, "No encontrado (HTTP $code)", code)
+                if (code !in 200..299) throw FetchException(FetchException.Kind.HTTP, "Error HTTP $code", code)
+                val total = r.body.contentLength().takeIf { it >= 0 }
+                if (total != null && total > maxBytes) throw FetchException(FetchException.Kind.TOO_LARGE, "El archivo (${total / 1048576} MB) excede el límite permitido.")
+                target.parentFile?.mkdirs()
+                val ctx = currentCoroutineContext()
+                var done = 0L
+                target.outputStream().buffered().use { out ->
+                    val src = r.body.source(); val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        ctx.ensureActive()
+                        val n = src.read(buf)
+                        if (n < 0) break
+                        done += n
+                        if (done > maxBytes) throw FetchException(FetchException.Kind.TOO_LARGE, "La descarga superó el límite permitido.")
+                        out.write(buf, 0, n); onProgress(done, total)
+                    }
+                }
+                if (total != null && done < total) throw FetchException(FetchException.Kind.NETWORK, "Descarga incompleta ($done de $total bytes).")
+                ok = true
+                done
+            }
+        } finally { if (!ok) target.delete() }
     }
 
     private suspend fun execute(startUrl: String, headers: Map<String, String>): Pair<okhttp3.Response, String> {
